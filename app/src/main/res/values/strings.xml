@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">퀵비디오</string>
+    <string name="permission_required">동영상 목록을 불러오려면 동영상 접근 권한이 필요합니다.</string>
+    <string name="grant_permission">권한 허용하기</string>
+    <string name="empty_videos">기기에 저장된 동영상이 없습니다.</string>
+    <string name="start_edit">편집 시작</string>
+</resources>

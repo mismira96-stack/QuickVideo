@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.QuickVideo" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#2979FF</item>
+        <item name="colorPrimaryVariant">#1C54B2</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#38BDF8</item>
+        <item name="android:statusBarColor">#10131C</item>
+        <item name="android:navigationBarColor">#161925</item>
+        <item name="android:windowBackground">#10131C</item>
+    </style>
+</resources>
