@@ -10,6 +10,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +18,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.roundToLong
 
@@ -41,45 +43,50 @@ class VlloTimelineView(context: Context) : View(context) {
     private val density = resources.displayMetrics.density
     private val scaledDensity = resources.displayMetrics.scaledDensity
 
-    // Scale: 80dp per second of timeline
-    private var pxPerSecond: Float = 84f * density
+    private val defaultPxPerSecond = 84f * density
+    private var pxPerSecond = defaultPxPerSecond
+    private val rulerStepsMs = longArrayOf(
+        125L, 250L, 500L, 1000L, 2500L, 5000L, 15_000L, 30_000L, 60_000L,
+        150_000L, 300_000L, 900_000L, 1_800_000L
+    )
 
-    private val trackHeightPx = 68f * density
-    private val rulerHeightPx = 24f * density
-    private val handleWidthPx = 16f * density
-    private val cornerRadiusPx = 8f * density
+    private val trackHeightPx = 58f * density
+    private val rulerHeightPx = 22f * density
+    private val trackTopPx = rulerHeightPx + 6f * density
+    private val handleWidthPx = 7f * density
+    private val cornerRadiusPx = 4f * density
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#131722")
+        color = Color.parseColor("#17181B")
     }
     private val rulerTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#8A96B0")
+        color = Color.parseColor("#A0A4A8")
         textSize = 10f * scaledDensity
         textAlign = Paint.Align.CENTER
     }
     private val rulerTickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#323B52")
+        color = Color.parseColor("#55575A")
         strokeWidth = 1f * density
     }
     private val clipBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#242B3D")
+        color = Color.parseColor("#2C2E31")
     }
     private val clipDividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#10131C")
-        strokeWidth = 2f * density
+        strokeWidth = density
     }
     private val selectedBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#38BDF8")
+        color = Color.parseColor("#F0F2F4")
         style = Paint.Style.STROKE
-        strokeWidth = 3f * density
+        strokeWidth = 1.2f * density
     }
     private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#2979FF")
+        color = Color.parseColor("#F0F2F4")
         style = Paint.Style.FILL
     }
     private val handleGripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        strokeWidth = 2f * density
+        color = Color.parseColor("#5A5E63")
+        strokeWidth = density
         strokeCap = Paint.Cap.ROUND
     }
     private val badgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -88,15 +95,11 @@ class VlloTimelineView(context: Context) : View(context) {
     private val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textSize = 10.5f * scaledDensity
-        typeface = Typeface.DEFAULT_BOLD
+        typeface = Typeface.DEFAULT
     }
     private val playheadLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        strokeWidth = 2.5f * density
-    }
-    private val playheadCapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
+        color = Color.parseColor("#009CE9")
+        strokeWidth = 1.25f * density
     }
 
     private val clipStripBitmaps = HashMap<String, List<Bitmap>>()
@@ -104,18 +107,29 @@ class VlloTimelineView(context: Context) : View(context) {
     private val uiScope = CoroutineScope(Dispatchers.Main)
 
     private enum class TouchMode {
-        NONE, SCRUB, TRIM_LEFT, TRIM_RIGHT
+        NONE, SCRUB, TRIM_LEFT, TRIM_RIGHT, ZOOM
     }
 
     private var touchMode = TouchMode.NONE
     private var downX = 0f
-    private var downY = 0f
     private var isDragging = false
-    private var initialPlayheadMs = 0L
+    private var lastScrubX = 0f
+    private var lastScrubEventTime = 0L
     private var initialTrimStartMs = 0L
     private var initialTrimEndMs = 0L
     private var activeTrimStartMs = 0L
     private var activeTrimEndMs = 0L
+
+    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            if (touchMode != TouchMode.ZOOM) return false
+            val totalSeconds = (placements.last().timelineEndMs / 1000f).coerceAtLeast(1f)
+            val fitScale = (width / totalSeconds).coerceAtMost(defaultPxPerSecond)
+            pxPerSecond = (pxPerSecond * detector.scaleFactor).coerceIn(fitScale, defaultPxPerSecond * 4f)
+            invalidate()
+            return true
+        }
+    }).apply { isQuickScaleEnabled = false }
 
     fun setTimelineData(
         newClips: List<VideoClip>,
@@ -127,6 +141,11 @@ class VlloTimelineView(context: Context) : View(context) {
         placements = TimelineOperations.placements(newClips)
         selectedClipIndex = selectedIndex.coerceIn(0, max(0, newClips.lastIndex))
         val total = TimelineOperations.totalDurationMs(newClips)
+        if (oldIds.isEmpty() && total > 0L) {
+            // Start long videos with a wider view while keeping short clips at the normal scale.
+            pxPerSecond = (max(width.toFloat(), 320f * density) / (total / 1000f))
+                .coerceIn(16f * density, defaultPxPerSecond)
+        }
         playheadMs = currentPlayheadMs.coerceIn(0L, total)
 
         if (oldIds != newClips.map { it.id }) {
@@ -201,20 +220,23 @@ class VlloTimelineView(context: Context) : View(context) {
 
         canvas.drawRect(0f, 0f, w, h, bgPaint)
 
-        val trackTop = rulerHeightPx + 14f * density
-        val trackBottom = (trackTop + trackHeightPx).coerceAtMost(h - 14f * density)
+        val trackTop = trackTopPx
+        val trackBottom = (trackTop + trackHeightPx).coerceAtMost(h - 7f * density)
+        if (trackBottom <= trackTop) return
 
         // 1. Draw Time Ruler ticks
         val totalMs = TimelineOperations.totalDurationMs(clips)
         val maxRulerMs = max(totalMs + 5000L, 10000L)
-        var tickMs = 0L
-        while (tickMs <= maxRulerMs) {
+        val tickStepMs = rulerStepsMs.firstOrNull { it / 1000f * pxPerSecond >= 38f * density }
+            ?: rulerStepsMs.last()
+        var tickMs = xToMs(-40f, centerX).coerceAtLeast(0L) / tickStepMs * tickStepMs
+        val lastTickMs = minOf(maxRulerMs, xToMs(w + 40f, centerX))
+        while (tickMs <= lastTickMs) {
             val x = msToX(tickMs, centerX)
             if (x >= -40f && x <= w + 40f) {
-                if (tickMs % 1000L == 0L) {
-                    val sec = tickMs / 1000L
+                if (tickMs % (2L * tickStepMs) == 0L) {
                     canvas.drawText(
-                        String.format("%02d:%02d", sec / 60, sec % 60),
+                        TimelineOperations.formatDuration(tickMs, tickMs % 1000L != 0L),
                         x,
                         rulerHeightPx - 7f * density,
                         rulerTextPaint
@@ -224,7 +246,7 @@ class VlloTimelineView(context: Context) : View(context) {
                     canvas.drawCircle(x, rulerHeightPx - 3f * density, 1.5f * density, rulerTickPaint)
                 }
             }
-            tickMs += 500L
+            tickMs += tickStepMs
         }
 
         // 2. Draw Video Clip Blocks
@@ -245,9 +267,10 @@ class VlloTimelineView(context: Context) : View(context) {
             val frames = clipStripBitmaps[placement.clip.uri.toString()]
             if (!frames.isNullOrEmpty()) {
                 val cellWidth = trackBottom - trackTop
-                var curX = leftX
-                var frameIdx = 0
-                while (curX < rightX) {
+                var frameIdx = floor(-leftX / cellWidth).toInt().coerceAtLeast(0)
+                var curX = leftX + frameIdx * cellWidth
+                val visibleRight = minOf(rightX, w)
+                while (curX < visibleRight) {
                     val bmp = frames[frameIdx % frames.size]
                     val dst = RectF(curX, trackTop, (curX + cellWidth).coerceAtMost(rightX), trackBottom)
                     val srcWidth = ((dst.width() / cellWidth) * bmp.width).toInt().coerceAtLeast(1)
@@ -259,7 +282,7 @@ class VlloTimelineView(context: Context) : View(context) {
             }
 
             // Slight dark gradient/tint for readability
-            canvas.drawColor(Color.parseColor("#33000000"))
+            canvas.drawColor(if (placement.index == selectedClipIndex) 0x18000000 else 0x48000000)
 
             // Draw clip number & speed/duration/mute/rotation badge inside clip
             val label = buildString {
@@ -348,26 +371,43 @@ class VlloTimelineView(context: Context) : View(context) {
             )
         }
 
-        // 4. Draw Fixed Center Playhead (White vertical bar + top diamond/triangle cap)
+        // Draw the fixed center playhead above the clip track.
         val playheadTop = rulerHeightPx - 2f * density
-        val playheadBottom = trackBottom + 10f * density
+        val playheadBottom = h
         canvas.drawLine(centerX, playheadTop, centerX, playheadBottom, playheadLinePaint)
-        canvas.drawCircle(centerX, playheadTop, 5f * density, playheadCapPaint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (clips.isEmpty()) return false
         val centerX = width / 2f
-        val trackTop = rulerHeightPx + 14f * density
-        val trackBottom = (trackTop + trackHeightPx).coerceAtMost(height - 14f * density)
+        val trackTop = trackTopPx
+        val trackBottom = (trackTop + trackHeightPx).coerceAtMost(height - 7f * density)
+
+        if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && touchMode != TouchMode.ZOOM) {
+            if ((touchMode == TouchMode.TRIM_LEFT || touchMode == TouchMode.TRIM_RIGHT) &&
+                (activeTrimStartMs != initialTrimStartMs || activeTrimEndMs != initialTrimEndMs)
+            ) {
+                // Let a trim already in progress finish before starting a zoom gesture.
+                return true
+            }
+            touchMode = TouchMode.ZOOM
+        }
+        scaleDetector.onTouchEvent(event)
+        if (touchMode == TouchMode.ZOOM) {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                touchMode = TouchMode.NONE
+                listener?.onScrubEnd(playheadMs)
+            }
+            return true
+        }
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 downX = event.x
-                downY = event.y
                 isDragging = false
-                initialPlayheadMs = playheadMs
+                lastScrubX = event.x
+                lastScrubEventTime = event.eventTime
 
                 // Check if user touched left/right trim handle of the selected clip
                 val sel = placements.getOrNull(selectedClipIndex)
@@ -401,18 +441,28 @@ class VlloTimelineView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (event.pointerCount != 1) return true
                 val dx = event.x - downX
                 if (abs(dx) > 4f * density) {
                     isDragging = true
                 }
+                if (!isDragging) return true
 
                 when (touchMode) {
                     TouchMode.SCRUB -> {
-                        val deltaMs = ((-dx / pxPerSecond) * 1000f).roundToLong()
-                        val totalMs = TimelineOperations.totalDurationMs(clips)
-                        playheadMs = (initialPlayheadMs + deltaMs).coerceIn(0L, totalMs)
-                        val placement = TimelineOperations.findPlacementAt(clips, playheadMs)
-                        if (placement != null && placement.index != selectedClipIndex) {
+                        val movementPx = event.x - lastScrubX
+                        val elapsedMs = (event.eventTime - lastScrubEventTime).coerceAtLeast(1L)
+                        lastScrubX = event.x
+                        lastScrubEventTime = event.eventTime
+                        val speedDpPerSecond = abs(movementPx) * 1000f / (elapsedMs * density)
+                        // Keep slow movement at the normal scale and cover more time on a quick swipe.
+                        val acceleration = ((speedDpPerSecond - 450f) / 1350f).coerceIn(0f, 1f)
+                        val deltaMs = (-movementPx / pxPerSecond * 1000f * (1f + 7f * acceleration)).roundToLong()
+                        val targetMs = (playheadMs + deltaMs).coerceIn(0L, placements.last().timelineEndMs)
+                        if (targetMs == playheadMs) return true
+                        playheadMs = targetMs
+                        val placement = placements.firstOrNull { playheadMs < it.timelineEndMs } ?: placements.last()
+                        if (placement.index != selectedClipIndex) {
                             selectedClipIndex = placement.index
                             listener?.onClipSelected(selectedClipIndex)
                         }
@@ -473,7 +523,7 @@ class VlloTimelineView(context: Context) : View(context) {
                         invalidate()
                     }
 
-                    TouchMode.NONE -> Unit
+                    TouchMode.NONE, TouchMode.ZOOM -> Unit
                 }
                 return true
             }
@@ -496,16 +546,20 @@ class VlloTimelineView(context: Context) : View(context) {
                     }
 
                     TouchMode.TRIM_LEFT, TouchMode.TRIM_RIGHT -> {
-                        listener?.onClipTrimChanged(
-                            selectedClipIndex,
-                            activeTrimStartMs,
-                            activeTrimEndMs,
-                            playheadMs,
-                            finished = true
-                        )
+                        if (isDragging) {
+                            listener?.onClipTrimChanged(
+                                selectedClipIndex,
+                                activeTrimStartMs,
+                                activeTrimEndMs,
+                                playheadMs,
+                                finished = true
+                            )
+                        } else {
+                            listener?.onScrubEnd(playheadMs)
+                        }
                     }
 
-                    TouchMode.NONE -> Unit
+                    TouchMode.NONE, TouchMode.ZOOM -> Unit
                 }
                 touchMode = TouchMode.NONE
                 invalidate()

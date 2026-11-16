@@ -3,7 +3,6 @@ package com.quickvideo.app
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
@@ -33,17 +32,20 @@ class VlloTransformOverlayView(context: Context) : View(context) {
     private val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#CC38BDF8")
         style = Paint.Style.STROKE
-        strokeWidth = 2f * density
-        pathEffect = DashPathEffect(floatArrayOf(6f * density, 4f * density), 0f)
+        strokeWidth = density
+    }
+    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#66FFFFFF")
+        strokeWidth = 0.65f * density
     }
     private val handleFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#2979FF")
+        color = Color.parseColor("#CC009CE9")
         style = Paint.Style.FILL
     }
     private val handleStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.STROKE
-        strokeWidth = 2f * density
+        strokeWidth = density
     }
 
     private var isInteracting = false
@@ -74,7 +76,13 @@ class VlloTransformOverlayView(context: Context) : View(context) {
         canvas.rotate(currentRotation)
 
         val rect = RectF(-baseHalfW, -baseHalfH, baseHalfW, baseHalfH)
-        canvas.drawRoundRect(rect, 8f * density, 8f * density, framePaint)
+        for (division in 1..3) {
+            val x = rect.left + rect.width() * division / 4f
+            val y = rect.top + rect.height() * division / 4f
+            canvas.drawLine(x, rect.top, x, rect.bottom, gridPaint)
+            canvas.drawLine(rect.left, y, rect.right, y, gridPaint)
+        }
+        canvas.drawRect(rect, framePaint)
 
         // Draw 4 corner handles for 1-finger drag rotate & resize
         val corners = arrayOf(
@@ -83,7 +91,7 @@ class VlloTransformOverlayView(context: Context) : View(context) {
             baseHalfW to baseHalfH,
             -baseHalfW to baseHalfH
         )
-        val r = 10f * density
+        val r = 6f * density
         for ((x, y) in corners) {
             canvas.drawCircle(x, y, r, handleFillPaint)
             canvas.drawCircle(x, y, r, handleStrokePaint)

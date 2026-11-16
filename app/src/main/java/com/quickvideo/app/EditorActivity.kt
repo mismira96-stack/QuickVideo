@@ -15,6 +15,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -39,6 +40,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
@@ -102,6 +104,7 @@ class EditorActivity : AppCompatActivity() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var isScrubbing = false
+    private var lastScrubSeekUptimeMs = 0L
 
     private val addVideoLauncher = registerForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(15)
@@ -113,7 +116,7 @@ class EditorActivity : AppCompatActivity() {
 
     private val progressTicker = object : Runnable {
         override fun run() {
-            if (::player.isInitialized && !isScrubbing && clips.isNotEmpty()) {
+            if (::player.isInitialized && player.isPlaying && !isScrubbing && clips.isNotEmpty()) {
                 syncPlayheadFromPlayer()
             }
             mainHandler.postDelayed(this, 33L)
@@ -162,7 +165,7 @@ class EditorActivity : AppCompatActivity() {
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
-                    if (playbackState == Player.STATE_ENDED) {
+                    if (playbackState == Player.STATE_ENDED && playWhenReady) {
                         pause()
                         val total = TimelineOperations.totalDurationMs(clips)
                         timelineView.setPlayheadPosition(total)
@@ -177,7 +180,7 @@ class EditorActivity : AppCompatActivity() {
     private fun setupUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#10131C"))
+            setBackgroundColor(Color.parseColor("#17181B"))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -189,7 +192,7 @@ class EditorActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(10))
-            setBackgroundColor(Color.parseColor("#161A26"))
+            setBackgroundColor(Color.parseColor("#222427"))
         }
 
         val backBtn = TextView(this).apply {
@@ -201,8 +204,8 @@ class EditorActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#23293B"))
-                setStroke(dp(1), Color.parseColor("#353F5A"))
+                setColor(Color.parseColor("#292C2F"))
+                setStroke(dp(1), Color.parseColor("#383B40"))
             }
             layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
             setOnClickListener { finish() }
@@ -220,8 +223,8 @@ class EditorActivity : AppCompatActivity() {
             setPadding(dp(12), 0, dp(12), 0)
             background = GradientDrawable().apply {
                 cornerRadius = dp(18).toFloat()
-                setColor(Color.parseColor("#23293B"))
-                setStroke(dp(1), Color.parseColor("#353F5A"))
+                setColor(Color.parseColor("#292C2F"))
+                setStroke(dp(1), Color.parseColor("#383B40"))
             }
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -244,8 +247,8 @@ class EditorActivity : AppCompatActivity() {
             setPadding(dp(12), 0, dp(12), 0)
             background = GradientDrawable().apply {
                 cornerRadius = dp(18).toFloat()
-                setColor(Color.parseColor("#23293B"))
-                setStroke(dp(1), Color.parseColor("#353F5A"))
+                setColor(Color.parseColor("#292C2F"))
+                setStroke(dp(1), Color.parseColor("#383B40"))
             }
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -277,7 +280,7 @@ class EditorActivity : AppCompatActivity() {
             )
             background = GradientDrawable().apply {
                 cornerRadius = dp(18).toFloat()
-                setColor(Color.parseColor("#2979FF"))
+                setColor(Color.parseColor("#009CE9"))
             }
             setOnClickListener { showExportDialog() }
         }
@@ -286,7 +289,7 @@ class EditorActivity : AppCompatActivity() {
 
         // 2. Video Preview Area with Direct Hand Drag Rotate & Resize Overlay
         val previewStage = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#0A0C12"))
+            setBackgroundColor(Color.parseColor("#17181B"))
             clipChildren = true
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -367,8 +370,8 @@ class EditorActivity : AppCompatActivity() {
             setPadding(dp(12), dp(6), dp(12), dp(6))
             background = GradientDrawable().apply {
                 cornerRadius = dp(14).toFloat()
-                setColor(Color.parseColor("#CC161A26"))
-                setStroke(dp(1), Color.parseColor("#353F5A"))
+                setColor(Color.parseColor("#A8222427"))
+                setStroke(dp(1), Color.parseColor("#383B40"))
             }
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -384,7 +387,7 @@ class EditorActivity : AppCompatActivity() {
         // 3. Transport & Time Bar (FrameLayout so [⏮ ▶ ⏭] is 100% centered with Timeline Playhead)
         val transportBar = FrameLayout(this).apply {
             setPadding(dp(16), dp(6), dp(16), dp(6))
-            setBackgroundColor(Color.parseColor("#161A26"))
+            setBackgroundColor(Color.parseColor("#222427"))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(48)
@@ -431,7 +434,7 @@ class EditorActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#2979FF"))
+                setColor(Color.parseColor("#009CE9"))
             }
             layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply {
                 setMargins(dp(3), 0, dp(3), 0)
@@ -462,8 +465,8 @@ class EditorActivity : AppCompatActivity() {
             )
             background = GradientDrawable().apply {
                 cornerRadius = dp(17).toFloat()
-                setColor(Color.parseColor("#23293B"))
-                setStroke(dp(1), Color.parseColor("#353F5A"))
+                setColor(Color.parseColor("#292C2F"))
+                setStroke(dp(1), Color.parseColor("#383B40"))
             }
             setOnClickListener {
                 player.pause()
@@ -479,21 +482,30 @@ class EditorActivity : AppCompatActivity() {
         timelineView = VlloTimelineView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(118)
+                dp(96)
             )
             listener = object : VlloTimelineView.Listener {
                 override fun onScrubStart() {
                     isScrubbing = true
+                    lastScrubSeekUptimeMs = 0L
                     player.pause()
                 }
 
                 override fun onScrubTo(timelineMs: Long) {
-                    seekPlayerToTimelineMs(timelineMs)
+                    val now = SystemClock.uptimeMillis()
+                    if (lastScrubSeekUptimeMs == 0L || now - lastScrubSeekUptimeMs >= 80L) {
+                        if (lastScrubSeekUptimeMs == 0L) {
+                            player.setSeekParameters(SeekParameters(100_000L, 100_000L))
+                        }
+                        lastScrubSeekUptimeMs = now
+                        seekPlayerToTimelineMs(timelineMs, updateClipPlayback = false)
+                    }
                     updateTimeLabel(timelineMs, TimelineOperations.totalDurationMs(clips))
                 }
 
                 override fun onScrubEnd(timelineMs: Long) {
                     isScrubbing = false
+                    player.setSeekParameters(SeekParameters.EXACT)
                     seekPlayerToTimelineMs(timelineMs)
                     updateTimeLabel(timelineMs, TimelineOperations.totalDurationMs(clips))
                 }
@@ -531,34 +543,34 @@ class EditorActivity : AppCompatActivity() {
         val cutTrimBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(6))
-            setBackgroundColor(Color.parseColor("#151A28"))
+            setPadding(dp(6), 0, dp(6), 0)
+            setBackgroundColor(Color.parseColor("#222427"))
         }
 
         cutTrimBar.addView(
-            createCutPillButton("첨부터", isPrimary = false) {
+            createVlloActionButton(EditorToolIconView.IconType.CUT_TO_START, "처음부터") {
                 performTrimToVeryStart()
-            }
+            }.first
         )
         cutTrimBar.addView(
-            createCutPillButton("여기부터", isPrimary = false) {
+            createVlloActionButton(EditorToolIconView.IconType.CUT_BEFORE, "여기부터") {
                 performTrimFromHere()
-            }
+            }.first
         )
         cutTrimBar.addView(
-            createCutPillButton("✂ 분할", isPrimary = true) {
+            createVlloActionButton(EditorToolIconView.IconType.SPLIT, "분할") {
                 performSplitAtPlayhead()
-            }
+            }.first
         )
         cutTrimBar.addView(
-            createCutPillButton("여기까지", isPrimary = false) {
+            createVlloActionButton(EditorToolIconView.IconType.CUT_AFTER, "여기까지") {
                 performTrimToHere()
-            }
+            }.first
         )
         cutTrimBar.addView(
-            createCutPillButton("끝까지", isPrimary = false) {
+            createVlloActionButton(EditorToolIconView.IconType.CUT_TO_END, "끝까지") {
                 performTrimToVeryEnd()
-            }
+            }.first
         )
         root.addView(cutTrimBar)
 
@@ -573,8 +585,8 @@ class EditorActivity : AppCompatActivity() {
         val actionBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(8), dp(8), dp(8), dp(12))
-            setBackgroundColor(Color.parseColor("#181D2C"))
+            setPadding(dp(6), dp(2), dp(6), dp(4))
+            setBackgroundColor(Color.parseColor("#2C2E31"))
         }
 
         val speedBtnTriple = createVlloActionButton(EditorToolIconView.IconType.SPEED, "배속") {
@@ -631,10 +643,10 @@ class EditorActivity : AppCompatActivity() {
                 dp(6)
             )
             cutTrimBar.setPadding(
-                dp(10) + sysBars.left,
-                dp(8),
-                dp(10) + sysBars.right,
-                dp(6)
+                dp(6) + sysBars.left,
+                0,
+                dp(6) + sysBars.right,
+                0
             )
             speedPanel.setPadding(
                 dp(16) + sysBars.left,
@@ -649,44 +661,15 @@ class EditorActivity : AppCompatActivity() {
                 dp(10)
             )
             actionBar.setPadding(
-                dp(8) + sysBars.left,
-                dp(8),
-                dp(8) + sysBars.right,
-                dp(12) + sysBars.bottom
+                dp(6) + sysBars.left,
+                dp(2),
+                dp(6) + sysBars.right,
+                dp(4) + sysBars.bottom
             )
             windowInsets
         }
 
         setContentView(root)
-    }
-
-    private fun createCutPillButton(label: String, isPrimary: Boolean, onClick: () -> Unit): TextView {
-        return TextView(this).apply {
-            text = label
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            typeface = Typeface.DEFAULT_BOLD
-            includeFontPadding = false
-            maxLines = 1
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                cornerRadius = dp(17).toFloat()
-                if (isPrimary) {
-                    setColor(Color.parseColor("#2979FF"))
-                } else {
-                    setColor(Color.parseColor("#23293B"))
-                    setStroke(dp(1), Color.parseColor("#353F5A"))
-                }
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                dp(34),
-                1f
-            ).apply {
-                setMargins(dp(3), 0, dp(3), 0)
-            }
-            setOnClickListener { onClick() }
-        }
     }
 
     private fun buildSpeedControlPanel(): LinearLayout {
@@ -1022,18 +1005,18 @@ class EditorActivity : AppCompatActivity() {
         val labelView = TextView(this).apply {
             text = label
             setTextColor(Color.parseColor("#D8E0F2"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            typeface = Typeface.DEFAULT_BOLD
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+            typeface = Typeface.DEFAULT
             includeFontPadding = false
             maxLines = 1
             gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, 0)
+            setPadding(0, dp(2), 0, 0)
         }
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(2), dp(4), dp(2), dp(4))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(dp(2), dp(3), dp(2), dp(3))
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f)
             addView(iconView)
             addView(labelView)
             setOnClickListener { onClick() }
@@ -1431,13 +1414,13 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
-    private fun seekPlayerToTimelineMs(timelineMs: Long) {
+    private fun seekPlayerToTimelineMs(timelineMs: Long, updateClipPlayback: Boolean = true) {
         val placement = TimelineOperations.findPlacementAt(clips, timelineMs) ?: return
         val offsetTimelineMs = (timelineMs - placement.timelineStartMs).coerceAtLeast(0L)
         val offsetInClipSourceMs = (offsetTimelineMs * placement.clip.speed).roundToLong()
             .coerceIn(0L, placement.clip.trimmedSourceDurationMs)
 
-        applyClipSpeedToPlayer(placement.index)
+        if (updateClipPlayback) applyClipSpeedToPlayer(placement.index)
         player.seekTo(placement.index, offsetInClipSourceMs)
     }
 

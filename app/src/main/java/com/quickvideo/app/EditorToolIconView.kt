@@ -9,7 +9,7 @@ import android.graphics.RectF
 import android.view.View
 
 /**
- * Custom crisp vector-drawn 22dp x 22dp toolbar icons (Blue Theme).
+ * Line icons for the editor toolbars.
  */
 class EditorToolIconView(
     context: Context,
@@ -17,28 +17,28 @@ class EditorToolIconView(
 ) : View(context) {
 
     enum class IconType {
-        SPEED, ROTATE, MIRROR, MUTE_OFF, MUTE_ON, DELETE
+        SPEED, ROTATE, MIRROR, MUTE_OFF, MUTE_ON, DELETE,
+        CUT_TO_START, CUT_BEFORE, SPLIT, CUT_AFTER, CUT_TO_END
     }
 
     private val density = resources.displayMetrics.density
-    private var highlighted: Boolean = false
+    private val normalColor = Color.parseColor("#C9CED3")
 
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = normalColor
         style = Paint.Style.STROKE
-        strokeWidth = 2f * density
+        strokeWidth = 1.55f * density
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = normalColor
         style = Paint.Style.FILL
     }
 
     fun setHighlighted(active: Boolean) {
-        highlighted = active
-        val c = if (active) Color.parseColor("#38BDF8") else Color.WHITE
+        val c = if (active) Color.parseColor("#38BDF8") else normalColor
         strokePaint.color = c
         fillPaint.color = c
         invalidate()
@@ -51,6 +51,42 @@ class EditorToolIconView(
         val u = w / 24f
 
         when (iconType) {
+            IconType.CUT_TO_START, IconType.CUT_BEFORE, IconType.CUT_AFTER, IconType.CUT_TO_END -> {
+                val reverse = iconType == IconType.CUT_AFTER || iconType == IconType.CUT_TO_END
+                val toEdge = iconType == IconType.CUT_TO_START || iconType == IconType.CUT_TO_END
+                canvas.save()
+                if (reverse) canvas.scale(-1f, 1f, cx, 0f)
+                val bracket = Path().apply {
+                    if (toEdge) {
+                        moveTo(10f * u, 4f * u)
+                        lineTo(7f * u, 4f * u)
+                        lineTo(7f * u, 20f * u)
+                        lineTo(10f * u, 20f * u)
+                    } else {
+                        moveTo(19f * u, 4f * u)
+                        lineTo(16f * u, 4f * u)
+                        lineTo(16f * u, 20f * u)
+                        lineTo(19f * u, 20f * u)
+                    }
+                }
+                canvas.drawPath(bracket, strokePaint)
+                val tip = if (toEdge) 12f else 12.5f
+                val tail = if (toEdge) 20f else 4.5f
+                val wing = if (toEdge) 15f else 9.5f
+                canvas.drawLine(tail * u, 12f * u, tip * u, 12f * u, strokePaint)
+                canvas.drawLine(tip * u, 12f * u, wing * u, 9f * u, strokePaint)
+                canvas.drawLine(tip * u, 12f * u, wing * u, 15f * u, strokePaint)
+                if (toEdge) canvas.drawLine(4f * u, 4f * u, 4f * u, 20f * u, strokePaint)
+                canvas.restore()
+            }
+
+            IconType.SPLIT -> {
+                canvas.drawCircle(7f * u, 6f * u, 2.7f * u, strokePaint)
+                canvas.drawCircle(17f * u, 6f * u, 2.7f * u, strokePaint)
+                canvas.drawLine(8.5f * u, 8f * u, 20f * u, 21f * u, strokePaint)
+                canvas.drawLine(15.5f * u, 8f * u, 4f * u, 21f * u, strokePaint)
+            }
+
             IconType.SPEED -> {
                 val arcRect = RectF(3.5f * u, 5f * u, 20.5f * u, 21f * u)
                 canvas.drawArc(arcRect, 180f, 180f, false, strokePaint)

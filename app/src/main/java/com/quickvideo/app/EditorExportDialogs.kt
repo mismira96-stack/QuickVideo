@@ -2,6 +2,7 @@ package com.quickvideo.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -12,12 +13,13 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
 /**
  * Dedicated Export UI Dialog Manager:
- * - Resolution (720p / 1080p / 4K) & Frame Rate (24 / 30 / 60fps) selection modal
+ * - Resolution and frame rate selection
  * - Live progress modal with cancel support
  * - Export complete modal with instant share support
  */
@@ -33,179 +35,125 @@ object EditorExportDialogs {
 
         fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).toInt()
 
+        val surface = Color.parseColor("#222427")
+        val foreground = Color.parseColor("#F0F2F4")
+        val secondaryText = Color.parseColor("#C0C5CA")
+        val accent = Color.parseColor("#009CE9")
         val container = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(20), dp(22), dp(16))
-            setBackgroundColor(Color.parseColor("#181D2C"))
+            setPadding(dp(18), dp(18), dp(18), dp(12))
+            setBackgroundColor(surface)
+        }
+        val scroll = ScrollView(activity).apply { addView(container) }
+        val dialog = AlertDialog.Builder(activity).setView(scroll).create()
+
+        fun label(text: String, size: Float, color: Int, bold: Boolean = false): TextView =
+            TextView(activity).apply {
+                this.text = text
+                setTextColor(color)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
+                if (bold) typeface = Typeface.DEFAULT_BOLD
+            }
+
+        container.addView(label("동영상 저장", 18f, foreground, bold = true))
+        val summary = label("", 12f, secondaryText).apply {
+            setPadding(0, dp(16), 0, dp(10))
+            accessibilityLiveRegion = TextView.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        val duration = TimelineOperations.formatDuration(TimelineOperations.totalDurationMs(clips), true)
+        val muteInfo = when {
+            clips.all { it.isMuted } -> " · 전체 음소거"
+            clips.any { it.isMuted } -> " · 일부 음소거"
+            else -> ""
         }
 
-        val header = TextView(activity).apply {
-            text = "동영상 추출하기 (저장)"
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            typeface = Typeface.DEFAULT_BOLD
+        fun updateSummary() {
+            val (width, height) = VideoExporter.computeOutputDimensions(clips.firstOrNull(), chosenRes, aspectRatioOption)
+            val detail = "${width}×${height} · ${chosenFps.fps}fps · $duration$muteInfo"
+            summary.text = if (chosenRes == ExportResolution.ORIGINAL) {
+                "$detail\n저장본은 새로 인코딩돼요."
+            } else {
+                detail
+            }
         }
-        container.addView(header)
 
-        val summary = TextView(activity).apply {
-            setTextColor(Color.parseColor("#A5B2CC"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-            setPadding(0, dp(6), 0, dp(16))
+        fun <T> addOptions(
+            heading: String,
+            options: List<T>,
+            initial: T,
+            titleFor: (T) -> String,
+            select: (T) -> Unit
+        ) {
+            container.addView(label(heading, 13f, secondaryText, bold = true).apply {
+                setPadding(0, dp(14), 0, dp(6))
+            })
+            val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+            val buttons = options.mapIndexed { index, option ->
+                label(titleFor(option), 13f, foreground).apply {
+                    gravity = Gravity.CENTER
+                    minHeight = dp(44)
+                    setPadding(dp(4), dp(4), dp(4), dp(4))
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                        if (index > 0) marginStart = dp(6)
+                    }
+                    row.addView(this)
+                }
+            }
+
+            fun showSelection(selected: T) {
+                buttons.forEachIndexed { index, button ->
+                    val active = options[index] == selected
+                    button.isSelected = active
+                    button.background = GradientDrawable().apply {
+                        cornerRadius = dp(7).toFloat()
+                        setColor(if (active) Color.parseColor("#213C4D") else Color.parseColor("#2C2E31"))
+                        if (active) setStroke(dp(1), accent)
+                    }
+                }
+            }
+
+            buttons.forEachIndexed { index, button ->
+                button.setOnClickListener {
+                    val option = options[index]
+                    select(option)
+                    showSelection(option)
+                    updateSummary()
+                }
+            }
+            showSelection(initial)
+            container.addView(row)
         }
+
+        addOptions("해상도", ExportResolution.entries, chosenRes, {
+            it.shortSidePx?.let { height -> "${height}p" } ?: "원본 해상도"
+        }) { chosenRes = it }
+        addOptions("프레임 레이트", ExportFps.entries, chosenFps, { "${it.fps}fps" }) { chosenFps = it }
+        updateSummary()
         container.addView(summary)
-
-        fun updateExportSummary() {
-            val total = TimelineOperations.formatDuration(TimelineOperations.totalDurationMs(clips), true)
-            val (outW, outH) = VideoExporter.computeOutputDimensions(clips.firstOrNull(), chosenRes, aspectRatioOption)
-            val orientLabel = if (outH >= outW) "세로" else "가로"
-            val muteInfo = if (clips.all { it.isMuted }) " · 전체 음소거" else if (clips.any { it.isMuted }) " · 일부 음소거" else ""
-            summary.text = "총 ${clips.size}개 클립 · 길이 $total · ${outW}×${outH} ($orientLabel)$muteInfo"
-        }
-
-        val resLabel = TextView(activity).apply {
-            text = "해상도 선택"
-            setTextColor(Color.parseColor("#D8E0F2"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, dp(8))
-        }
-        container.addView(resLabel)
-
-        val resButtons = mutableListOf<Pair<ExportResolution, LinearLayout>>()
-        fun refreshResSelection() {
-            for ((res, card) in resButtons) {
-                val selected = res == chosenRes
-                card.background = GradientDrawable().apply {
-                    cornerRadius = dp(12).toFloat()
-                    setColor(if (selected) Color.parseColor("#332979FF") else Color.parseColor("#252B3D"))
-                    setStroke(dp(if (selected) 2 else 1), if (selected) Color.parseColor("#38BDF8") else Color.parseColor("#353F5A"))
-                }
-            }
-            updateExportSummary()
-        }
-
-        for (res in ExportResolution.entries) {
-            val card = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), dp(10), dp(14), dp(10))
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    bottomMargin = dp(8)
-                }
-                val t1 = TextView(activity).apply {
-                    text = res.label
-                    setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                    typeface = Typeface.DEFAULT_BOLD
-                }
-                val t2 = TextView(activity).apply {
-                    text = res.desc
-                    setTextColor(Color.parseColor("#9DA8C0"))
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
-                }
-                addView(t1)
-                addView(t2)
-                setOnClickListener {
-                    chosenRes = res
-                    refreshResSelection()
-                }
-            }
-            resButtons.add(res to card)
-            container.addView(card)
-        }
-        refreshResSelection()
-
-        val fpsLabel = TextView(activity).apply {
-            text = "프레임 레이트"
-            setTextColor(Color.parseColor("#D8E0F2"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, dp(8), 0, dp(8))
-        }
-        container.addView(fpsLabel)
-
-        val fpsRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(18)
-            }
-        }
-        val fpsButtons = mutableListOf<Pair<ExportFps, TextView>>()
-        fun refreshFpsSelection() {
-            for ((f, btn) in fpsButtons) {
-                val selected = f == chosenFps
-                btn.setTextColor(Color.WHITE)
-                btn.background = GradientDrawable().apply {
-                    cornerRadius = dp(12).toFloat()
-                    setColor(if (selected) Color.parseColor("#2979FF") else Color.parseColor("#252B3D"))
-                    if (selected) setStroke(dp(1), Color.parseColor("#38BDF8"))
-                }
-            }
-        }
-
-        for (fps in ExportFps.entries) {
-            val btn = TextView(activity).apply {
-                text = fps.label
-                setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
-                typeface = Typeface.DEFAULT_BOLD
-                includeFontPadding = false
-                maxLines = 1
-                gravity = Gravity.CENTER
-                setPadding(dp(4), dp(10), dp(4), dp(10))
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    setMargins(dp(4), 0, dp(4), 0)
-                }
-                setOnClickListener {
-                    chosenFps = fps
-                    refreshFpsSelection()
-                }
-            }
-            fpsButtons.add(fps to btn)
-            fpsRow.addView(btn)
-        }
-        refreshFpsSelection()
-        container.addView(fpsRow)
-
-        val dialog = AlertDialog.Builder(activity)
-            .setView(container)
-            .create()
 
         val actionRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
         }
-
-        val cancelBtn = TextView(activity).apply {
-            text = "취소"
-            setTextColor(Color.parseColor("#A5A8BC"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setPadding(dp(18), dp(10), dp(18), dp(10))
+        actionRow.addView(label("취소", 14f, secondaryText).apply {
+            gravity = Gravity.CENTER
+            minHeight = dp(44)
+            setPadding(dp(18), 0, dp(18), 0)
             setOnClickListener { dialog.dismiss() }
-        }
-        actionRow.addView(cancelBtn)
-
-        val startExportBtn = TextView(activity).apply {
-            text = "지금 저장하기"
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(22), dp(10), dp(22), dp(10))
+        })
+        actionRow.addView(label("저장", 14f, Color.parseColor("#071C28"), bold = true).apply {
+            gravity = Gravity.CENTER
+            minHeight = dp(44)
+            setPadding(dp(24), 0, dp(24), 0)
             background = GradientDrawable().apply {
-                cornerRadius = dp(18).toFloat()
-                setColor(Color.parseColor("#2979FF"))
+                cornerRadius = dp(8).toFloat()
+                setColor(accent)
             }
             setOnClickListener {
                 dialog.dismiss()
                 startExportProcess(activity, clips, chosenRes, chosenFps, aspectRatioOption)
             }
-        }
-        actionRow.addView(startExportBtn)
+        })
         container.addView(actionRow)
 
         dialog.show()
@@ -342,6 +290,37 @@ object EditorExportDialogs {
             setPadding(0, dp(6), 0, dp(20))
         }
         box.addView(sub)
+
+        box.addView(TextView(activity).apply {
+            text = "저장한 영상 보기 ›"
+            setTextColor(Color.parseColor("#8FD8FF"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            gravity = Gravity.CENTER
+            minHeight = dp(44)
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setStroke(dp(1), Color.parseColor("#566775"))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(16)
+            }
+            setOnClickListener {
+                val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(savedUri, "video/mp4")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                try {
+                    activity.startActivity(viewIntent)
+                } catch (_: ActivityNotFoundException) {
+                    Toast.makeText(activity, "갤러리의 QuickVideo 앨범에서 저장한 영상을 확인해 주세요.", Toast.LENGTH_LONG).show()
+                }
+            }
+        })
 
         val dialog = AlertDialog.Builder(activity)
             .setView(box)

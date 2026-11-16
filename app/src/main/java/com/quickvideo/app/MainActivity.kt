@@ -1,5 +1,6 @@
 package com.quickvideo.app
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -9,7 +10,11 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -111,7 +116,7 @@ class MainActivity : AppCompatActivity() {
         topBar.addView(brandDot)
 
         val titleView = TextView(this).apply {
-            text = "퀵비디오"
+            setText(R.string.app_name)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             includeFontPadding = false
@@ -160,8 +165,23 @@ class MainActivity : AppCompatActivity() {
 
         // Subtitle instruction bar
         val subHintBar = TextView(this).apply {
-            text = "날짜별 동영상을 1개 또는 여러 개 순서대로 눌러 바로 편집하세요"
+            val hint = "날짜별 동영상을 1개 또는 여러 개 순서대로 눌러 바로 편집하세요"
+            val policyLabel = getString(R.string.privacy_policy)
+            text = SpannableString("$hint\n$policyLabel").apply {
+                setSpan(object : ClickableSpan() {
+                    override fun onClick(widget: View) {
+                        val policyUri = Uri.parse(getString(R.string.privacy_policy_url))
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, policyUri))
+                        } catch (_: ActivityNotFoundException) {
+                            Toast.makeText(this@MainActivity, R.string.privacy_policy_open_failed, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }, hint.length + 1, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            movementMethod = LinkMovementMethod.getInstance()
             setTextColor(Color.parseColor("#9BA7C0"))
+            setLinkTextColor(Color.parseColor("#7DD3FC"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             includeFontPadding = false
             setPadding(dp(16), dp(9), dp(16), dp(9))
